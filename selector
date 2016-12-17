@@ -1,0 +1,223 @@
+#!/usr/bin/perl
+use strict;
+use warnings;
+
+use Socket;
+use Carp;
+use FileHandle;
+use DBI;
+use DBD::Pg;
+use URI::Escape;
+use Hash::MultiValue;
+use JSON;
+use Data::Dumper;
+use File::Slurp qw(slurp);
+
+# Code stolen from Plack::Request
+sub decode_query_string {
+    my $query_string = shift;
+    my @query;
+    if (defined $query_string) {
+        if ($query_string =~ /=/) {
+            # Handle  ?foo=bar&bar=foo type of query
+            @query =
+                map { s/\+/ /g; URI::Escape::uri_unescape($_) }
+                map { /=/ ? split(/=/, $_, 2) : ($_ => '')}
+                split(/[&;]/, $query_string);
+        } else {
+            # Handle ...?dog+bones type of query
+            @query =
+                map { (URI::Escape::uri_unescape($_), '') }
+                split(/\+/, $query_string, -1);
+        }
+    }
+    my $hash = Hash::MultiValue->new(@query);
+    return$hash->mixed;
+}
+
+my $CSS = slurp('selector.css');
+
+my @Connect = ("dbi:Pg:;port=5433", '', '', {pg_enable_utf8 => 1, sslmode => 'require', RaiseError => 1, PrintError => 0, AutoCommit => 1});
+
+my $DBH = DBI->connect(@Connect);
+
+my $Selector = $DBH->prepare('SELECT * FROM Selector(_FilterSchema := $1, _FilterTable := $2, _FilterColumn := $3, _FilterValue := $4)');
+
+my $Port = (@ARGV ? $ARGV[0] : 8432);
+my $Proto = getprotobyname('tcp');
+socket(S, PF_INET, SOCK_STREAM, $Proto) or die;
+setsockopt(S, SOL_SOCKET, SO_REUSEADDR, pack("l", 1)) or die;
+bind(S, sockaddr_in($Port, INADDR_ANY)) or die;
+listen(S, SOMAXCONN) or die;
+while (1)
+{
+    my $CPortCAddr = accept(C, S);
+    my ($CPort,$CAddr) = sockaddr_in($CPortCAddr);
+    C->autoflush(1);
+    my $CName = gethostbyaddr($CAddr,AF_INET);
+    printf(" <<<Request From '%s'>>>\n",$CName);
+    my $Params;
+    while (my $Line = <C>)
+    {
+        if ($Line =~ m!^GET /\?(.+) HTTP/\d.\d!) {
+            $Params = decode_query_string($1);
+        }
+        print $Line;
+        if ($Line =~ /^\r/) { last; }
+    }
+    foreach my $Key (keys %{$Params}) {
+        if (defined($Params->{$Key}) && $Params->{$Key} eq '') {
+            $Params->{$Key} = undef;
+        }
+    }
+
+    if (!defined($Params->{FilterValue})) {
+        $Params->{FilterColumn} = undef;
+    } elsif ($Params->{FilterValue} eq 'NULL') {
+        $Params->{FilterValue} = undef;
+    }
+    if (!defined($Params->{FilterColumn})) {
+        $Params->{FilterValue} = undef;
+    }
+
+    $Selector->execute(
+        $Params->{FilterSchema},
+        $Params->{FilterTable},
+        $Params->{FilterColumn},
+        $Params->{FilterValue}
+    );
+    my ($JSON) = $Selector->fetchrow_array();
+    $Selector->finish();
+    my $Data = from_json($JSON);
+    print C "HTTP/1.1 200\n\n";
+
+    print C qq!<html><head><style>$CSS</style></style></head><body translate="no"><form>!;
+
+    # Filter menu
+    print C qq!<div class="menu row">!;
+    print C qq!<div class="menu row">!;
+    print C qq!<div class="menu cell">! . HTML_Select($Data->{schemas},'FilterSchema',$Params->{FilterSchema},'Any schema', {OnChangeSubmit => 1}) . qq!</div>!;
+    print C qq!<div class="menu cell">! . HTML_Select($Data->{tables}, 'FilterTable', $Params->{FilterTable}, 'Any table',  {OnChangeSubmit => 1}) . qq!</div>!;
+    print C qq!<div class="menu cell">! . HTML_Select($Data->{columns},'FilterColumn',$Params->{FilterColumn},'Any column', {OnChangeSubmit => 0}) . qq!</div>!;
+    print C qq!<div class="menu cell">! . HTML_Input('FilterValue', $Params->{FilterValue}) . qq!</div>!;
+    print C qq!<div class="menu cell"><input type="submit" value="SELECT"/></div>!;
+    print C qq!</div>!;
+    print C qq!</div>!;
+
+
+    # Output tables
+    my $ID = 0;
+    foreach my $Table (sort keys %{$Data->{result}}) {
+        if (!defined($Params->{FilterTable})) {
+            print C qq!<label class="collapse label" for="$Table">$Table</label>!;
+            print C qq!<input id="$Table" type="checkbox"/>!;
+        }
+        print C qq!<div class="table">!;
+        my $Columns = $Data->{result}->{$Table}->{columns};
+        print C qq!<div class="row header blue">!;
+        foreach my $Column (@{$Columns}) {
+            print C qq!<div class="cell">$Column</div>!;
+        }
+        print C qq!</div>!;
+        foreach my $Row (@{$Data->{result}->{$Table}->{rows}}) {
+            my $Values   = $Row->{values};
+            my $Parents  = $Row->{parents};
+            my $Children = $Row->{children};
+            print C qq!<div class="row">!;
+            foreach my $Column (@{$Columns}) {
+                if (defined($Values->{$Column})) {
+                    if (defined($Parents)
+                    &&  defined($Parents->{$Column})
+                    &&  scalar @{$Parents->{$Column}} == 1
+                    && (!defined($Children) || !defined($Children->{$Column}))
+                    ) {
+                        my $Parent = $Parents->{$Column}->[0];
+                        print C qq!<div class="cell">&uarr;! . HTML_Link($Parent, $Values->{$Column}) . qq!</div>!;
+                    } elsif (defined($Children)
+                    &&       defined($Children->{$Column})
+                    &&       scalar @{$Children->{$Column}} == 1
+                    &&      (!defined($Parents) || !defined($Parents->{$Column}))
+                    ) {
+                        my $Child = $Children->{$Column}->[0];
+                        print C qq!<div class="cell">&darr;! . HTML_Link($Child, $Values->{$Column}) . qq!</div>!;
+                    } elsif ( (!defined($Parents)  || !defined($Parents->{$Column}))
+                           && (!defined($Children) || !defined($Children->{$Column}))
+                    ) {
+                        print C qq!<div class="cell">$Values->{$Column}</div>!;
+                    } else {
+                        $ID++;
+                        my $Arrows = '';
+                        my $Links = '';
+                        if (defined($Parents) && defined($Parents->{$Column})) {
+                            foreach my $Parent (@{$Parents->{$Column}}) {
+                                $Arrows .= '&uarr;';
+                                $Links .= '&uarr;' . HTML_Link($Parent) . '<br/>';
+                            }
+                        }
+                        my $DownArrows = '';
+                        my $ChildrenLinks = '';
+                        if (defined($Children) && defined($Children->{$Column})) {
+                            foreach my $Child (@{$Children->{$Column}}) {
+                                $Arrows .= '&darr;';
+                                $Links .= '&darr;' . HTML_Link($Child) . '<br/>';
+                            }
+                        }
+                        print C qq!<div class="cell">!;
+                        print C qq!<label class="collapse link" for="cell-$ID">$Arrows$Values->{$Column}</label>!;
+                        print C qq!<input id="cell-$ID" type="checkbox" checked/>!;
+                        print C qq!<div>!;
+                        print C $Links;
+                        print C qq!</div>!;
+                        print C qq!</div>!;
+                    }
+                } else {
+                    print C qq!<div class="cell null">NULL</div>!;
+                }
+            }
+            print C qq!</div>!;
+        }
+        print C qq!</div>!;
+    }
+
+    close(C);
+}
+
+sub HTML_Link {
+    my $HREF = shift;
+    my $Value = shift;
+    if (!defined($Value)) {
+        $Value = ($HREF->{schema} eq 'public' ? '' : $HREF->{schema} . '.') . $HREF->{table};
+    }
+    my $HTML = qq!<a href="?FilterSchema=$HREF->{schema}&FilterTable=$HREF->{table}&FilterColumn=$HREF->{column}&FilterValue=$HREF->{value}">$Value</a>!;
+    return $HTML;
+}
+
+sub HTML_Select {
+    my $Dataptions = shift;
+    my $Name = shift;
+    my $SelectedValue = shift;
+    my $DefaultLabel = shift;
+    my $Attributes = shift;
+    my $HTML = qq!<select name="$Name" ! . ($Attributes->{OnChangeSubmit} ? qq! onchange="this.form.submit()"! : '') . qq!><option value="">$DefaultLabel</option>!;
+    foreach my $Value (@{$Dataptions}) {
+        if (defined($SelectedValue) && $Value eq $SelectedValue) {
+            $HTML .= qq!<option selected="selected">$Value</option>!;
+        } else {
+            $HTML .= qq!<option>$Value</option>!;
+        }
+    }
+    $HTML .= qq!</select>!;
+    return $HTML;
+}
+
+sub HTML_Input {
+    my $Name = shift;
+    my $Value = shift;
+    my $HTML = '';
+    if (defined($Value)) {
+        $HTML .= qq!<input name="$Name" value="$Value"/>!;
+    } else {
+        $HTML .= qq!<input name="$Name"/>!;
+    }
+    return $HTML;
+}

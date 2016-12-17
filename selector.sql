@@ -1,10 +1,12 @@
 CREATE OR REPLACE FUNCTION public.Selector(
-_FilterSchema name DEFAULT NULL,
-_FilterTable  name DEFAULT NULL,
-_FilterColumn name DEFAULT NULL,
-_FilterValue  text DEFAULT NULL
+_FilterSchema name    DEFAULT NULL,
+_FilterTable  name    DEFAULT NULL,
+_FilterColumn name    DEFAULT NULL,
+_FilterValue  text    DEFAULT NULL,
+_Limit        bigint  DEFAULT 100,
+_Offset       bigint  DEFAULT 0
 )
-RETURNS jsonb
+RETURNS text
 LANGUAGE plpgsql
 AS $FUNC$
 DECLARE
@@ -92,6 +94,8 @@ LOOP
     FOR _Row IN
     EXECUTE format(
         'SELECT * FROM %I.%I
+        %s
+        %s
         %s',
         _SchemaName, _TableName,
         CASE WHEN _FilterColumn IS NOT NULL THEN
@@ -100,7 +104,9 @@ LOOP
                     format('= %L',_FilterValue)
                 ELSE 'IS NULL' END
             )
-        END
+        END,
+        CASE WHEN _Limit  IS NOT NULL THEN 'LIMIT ' || _Limit END,
+        CASE WHEN _Offset IS NOT NULL THEN 'OFFSET '|| _Offset END
     )
     LOOP
         _Values   := row_to_json(_Row)::jsonb;
@@ -185,13 +191,18 @@ LOOP
         IF _Children <> '{}'::jsonb THEN _Family := _Family || jsonb_build_object('children', _Children); END IF;
         _Rows := _Rows || _Family;
     END LOOP;
-    _Result := _Result || jsonb_build_object(_Table::regclass, _Rows);
+    _Result := _Result || jsonb_build_object(
+        _Table::regclass, jsonb_build_object(
+            'columns', _Columns,
+            'rows',    _Rows
+        )
+    );
 END LOOP;
-RETURN jsonb_build_object(
+RETURN jsonb_pretty(jsonb_build_object(
     'schemas', _SchemaNames,
     'tables',  _TableNames,
     'columns', _ColumnNames,
     'result',  _Result
-);
+));
 END;
 $FUNC$;
