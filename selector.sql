@@ -3,7 +3,7 @@ _FilterSchema name    DEFAULT NULL,
 _FilterTable  name    DEFAULT NULL,
 _FilterColumn name    DEFAULT NULL,
 _FilterValue  text    DEFAULT NULL,
-_Limit        bigint  DEFAULT 100,
+_Limit        bigint  DEFAULT 10,
 _Offset       bigint  DEFAULT 0
 )
 RETURNS text
@@ -69,6 +69,7 @@ AND (_FilterColumn IS NULL OR EXISTS (
 GROUP BY pg_class.oid, pg_namespace.nspname, pg_class.relname
 ORDER BY pg_namespace.nspname, pg_class.relname
 LOOP
+    RAISE NOTICE '%', _TableName;
     SELECT to_jsonb(array_agg(attname ORDER BY attnum))
     INTO _Columns
     FROM pg_attribute
@@ -161,7 +162,8 @@ LOOP
                     ['schema', _RelatedSchema],
                     ['table',  _RelatedTable],
                     ['column', _RelatedColumn],
-                    ['value',  _ColumnValue]
+                    ['value',  _ColumnValue],
+                    ['label', Get_Unique_Name_For_ID(_RelatedSchema,_RelatedTable,_RelatedColumn,_ColumnValue)]
                 ]);
                 IF    _RelationType = 'PARENT' THEN _ParentColumns := _ParentColumns || _RelatedData;
                 ELSIF _RelationType = 'CHILD'  THEN _ChildColumns  := _ChildColumns  || _RelatedData;
