@@ -44,46 +44,30 @@ FOR
     _TableNames,
     _ColumnNames
 IN
-WITH
-SchemasTablesColumns AS (
-    SELECT
-        pg_class.oid,
-        pg_namespace.nspname,
-        pg_class.relname,
-        pg_attribute.attname
-    FROM pg_attribute
-    INNER JOIN pg_class     ON pg_class.oid     = pg_attribute.attrelid
-    INNER JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace
-    WHERE pg_class.relkind = 'r'
-    AND pg_attribute.attnum > 0
-    AND pg_namespace.nspname !~ '^(pg_(toast.*|temp.*|catalog)|information_schema)$'
-    AND NOT pg_is_other_temp_schema(pg_namespace.oid)
-    AND (_FilterSchema IS NULL OR pg_namespace.nspname = _FilterSchema)
-    AND (_FilterTable  IS NULL OR pg_class.relname     = _FilterTable)
-    AND (_FilterColumn IS NULL OR EXISTS (
-        SELECT 1 FROM pg_attribute
-        WHERE attrelid = pg_class.oid
-        AND   attnum   > 0
-        AND   attname  = _FilterColumn
-    ))
-),
-FilterOptions AS (
-    SELECT
-        to_jsonb(array_agg(DISTINCT nspname ORDER BY nspname)) AS SchemaNames,
-        to_jsonb(array_agg(DISTINCT relname ORDER BY relname)) AS TableNames,
-        to_jsonb(array_agg(DISTINCT attname ORDER BY attname)) AS ColumnNames
-    FROM SchemasTablesColumns
-)
-SELECT DISTINCT
-    SchemasTablesColumns.oid,
-    SchemasTablesColumns.nspname,
-    SchemasTablesColumns.relname,
-    FilterOptions.SchemaNames,
-    FilterOptions.TableNames,
-    FilterOptions.ColumnNames
-FROM SchemasTablesColumns
-CROSS JOIN FilterOptions
-ORDER BY SchemasTablesColumns.nspname, SchemasTablesColumns.relname
+SELECT
+    pg_class.oid,
+    pg_namespace.nspname,
+    pg_class.relname,
+    to_jsonb(array_agg(DISTINCT pg_namespace.nspname ORDER BY pg_namespace.nspname)),
+    to_jsonb(array_agg(DISTINCT pg_class.relname     ORDER BY pg_class.relname    )),
+    to_jsonb(array_agg(DISTINCT pg_attribute.attname ORDER BY pg_attribute.attname))
+FROM pg_attribute
+INNER JOIN pg_class     ON pg_class.oid     = pg_attribute.attrelid
+INNER JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace
+WHERE pg_class.relkind = 'r'
+AND pg_attribute.attnum > 0
+AND pg_namespace.nspname !~ '^(pg_(toast.*|temp.*|catalog)|information_schema)$'
+AND NOT pg_is_other_temp_schema(pg_namespace.oid)
+AND (_FilterSchema IS NULL OR pg_namespace.nspname = _FilterSchema)
+AND (_FilterTable  IS NULL OR pg_class.relname     = _FilterTable)
+AND (_FilterColumn IS NULL OR EXISTS (
+    SELECT 1 FROM pg_attribute
+    WHERE attrelid = pg_class.oid
+    AND   attnum   > 0
+    AND   attname  = _FilterColumn
+))
+GROUP BY pg_class.oid, pg_namespace.nspname, pg_class.relname
+ORDER BY pg_namespace.nspname, pg_class.relname
 LOOP
     SELECT to_jsonb(array_agg(attname ORDER BY attnum))
     INTO _Columns
