@@ -53,6 +53,9 @@ body {
   font-style: italic;
   color: #8b8b8b;
 }
+.cell.truncated {
+  font-style: italic;
+}
 @media screen and (max-width: 580px) {
   .cell {
     padding: 2px 12px;
@@ -64,13 +67,6 @@ body {
   margin: 0 0 0 0;
   width: 100%;
   display: table;
-  background: #2b2b2b;
-}
-.menu.row {
-  display: table-row;
-}
-.menu.cell {
-  display: table-cell;
 }
 
 
@@ -101,3 +97,12 @@ a {
 .link {
   text-decoration: underline;
 }
+
+
+.blink_me {
+  animation: blinker 1s linear 2;
+}
+@keyframes blinker {  
+  50% { opacity: 0; }
+}
+

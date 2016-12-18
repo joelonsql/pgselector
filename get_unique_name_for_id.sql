@@ -25,10 +25,11 @@ INNER JOIN pg_constraint AS UniqueNameConstraint ON UniqueNameConstraint.conreli
                                                 AND UniqueNameConstraint.conkey[1]   = UniqueNameColumn.attnum
                                                 AND UniqueNameConstraint.contype    IN ('p','u')
 INNER JOIN pg_type                               ON pg_type.oid                      = UniqueNameColumn.atttypid
-WHERE pg_namespace.nspname = _Schema
-AND pg_class.relname       = _Table
-AND UniqueIDColumn.attname = _Column
-AND pg_type.typcategory    = 'S'
+WHERE pg_namespace.nspname                      = _Schema
+AND pg_class.relname                            = _Table
+AND UniqueIDColumn.attname                      = _Column
+AND UniqueNameColumn.attnotnull                 IS TRUE
+AND pg_type.typcategory                         = 'S'
 AND array_length(UniqueIDConstraint.conkey,1)   = 1
 AND array_length(UniqueNameConstraint.conkey,1) = 1;
 IF FOUND THEN

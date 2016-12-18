@@ -1,6 +1,6 @@
 #!/usr/bin/perl
 use strict;
-use warnings;
+use utf8;
 
 use Socket;
 use Carp;
@@ -12,6 +12,8 @@ use Hash::MultiValue;
 use JSON;
 use Data::Dumper;
 use File::Slurp qw(slurp);
+
+use HTML;
 
 # Code stolen from Plack::Request
 sub decode_query_string {
@@ -41,11 +43,19 @@ my @Connect = ("dbi:Pg:;port=5433", '', '', {pg_enable_utf8 => 1, sslmode => 're
 
 my $DBH = DBI->connect(@Connect);
 
-my $Selector = $DBH->prepare('SELECT * FROM Selector(_FilterSchema := $1, _FilterTable := $2, _FilterColumn := $3, _FilterValue := $4)');
+my $Selector = $DBH->prepare('SELECT * FROM Selector(
+    _FilterSchema := $1,
+    _FilterTable  := $2,
+    _FilterColumn := $3,
+    _FilterValue  := $4,
+    _Limit        := $5,
+    _Offset       := $6
+)');
 
 my $Port = (@ARGV ? $ARGV[0] : 8432);
 my $Proto = getprotobyname('tcp');
 socket(S, PF_INET, SOCK_STREAM, $Proto) or die;
+binmode(S,":utf8");
 setsockopt(S, SOL_SOCKET, SO_REUSEADDR, pack("l", 1)) or die;
 bind(S, sockaddr_in($Port, INADDR_ANY)) or die;
 listen(S, SOMAXCONN) or die;
@@ -71,6 +81,7 @@ while (1)
         close(C);
         next;
     }
+    my $HTML = HTML->New({Params => $Params});
     foreach my $Key (keys %{$Params}) {
         if (defined($Params->{$Key}) && $Params->{$Key} eq '') {
             $Params->{$Key} = undef;
@@ -86,40 +97,113 @@ while (1)
         $Params->{FilterValue} = undef;
     }
 
-print "
-    Selector->execute(
-        $Params->{FilterSchema},
-        $Params->{FilterTable},
-        $Params->{FilterColumn},
-        $Params->{FilterValue}
-    );
-";
+    if (!defined($Params->{ShowUniqueNamesForIDs})) {
+        $Params->{ShowUniqueNamesForIDs} = '1';
+    }
+
+    if (!defined($Params->{Limit})) {
+        $Params->{Limit} = '100';
+    }
+    if (!defined($Params->{Offset})) {
+        $Params->{Offset} = '0';
+    }
 
     $Selector->execute(
         $Params->{FilterSchema},
         $Params->{FilterTable},
         $Params->{FilterColumn},
-        $Params->{FilterValue}
+        $Params->{FilterValue},
+        $Params->{Limit},
+        $Params->{Offset}
     );
     my ($JSON) = $Selector->fetchrow_array();
-    $Selector->finish();
+    utf8::encode($JSON);
     my $Data = from_json($JSON);
+    $Selector->finish();
+
     print C "HTTP/1.1 200\n\n";
 
-    print C qq!<html><head><style>$CSS</style></style></head><body translate="no"><form id="SelectorForm">!;
+    print C $HTML->HTML(
+        $HTML->Head({CSS => $CSS}) .
+        $HTML->Body(
+            $HTML->Form(
+                {ID => 'SelectorForm'}
+
+            )
+        )
+    );
 
     # Filter menu
-    print C qq!<div class="menu row">!;
-    print C qq!<div class="menu row">!;
-    print C qq!<div class="menu cell">! . HTML_Select($Data->{schemas},'FilterSchema',$Params->{FilterSchema},'Any schema', {OnChangeSubmit => 1}) . qq!</div>!;
-    print C qq!<div class="menu cell">! . HTML_Select($Data->{tables}, 'FilterTable', $Params->{FilterTable}, 'Any table',  {OnChangeSubmit => 1}) . qq!</div>!;
-    print C qq!<div class="menu cell">! . HTML_Select($Data->{columns},'FilterColumn',$Params->{FilterColumn},'Any column', {OnChangeSubmit => 0}) . qq!</div>!;
-    print C qq!<div class="menu cell">! . HTML_Input('FilterValue', $Params->{FilterValue}) . qq!</div>!;
-    print C qq!<div class="menu cell"><input type="submit" value="SELECT"/></div>!;
-    print C qq!<div class="menu cell"><input type="button" onClick="document.getElementById('FilterValue').value = ''; document.getElementById('SelectorForm').submit();" value="Any value"/></div>!;
-    print C qq!</div>!;
-    print C qq!</div>!;
+    print C $HTML->Menu([
+        $HTML->Select({
+            Name           => 'FilterSchema',
+            Options        => $Data->{schemas},
+            SelectedValue  => $Params->{FilterSchema},
+            DefaultText    => 'Any schema',
+            OnChangeSubmit => 1
+        }),
+        $HTML->Select({
+            Name           => 'FilterTable',
+            Options        => $Data->{tables},
+            SelectedValue  => $Params->{FilterTable},
+            DefaultText    => 'Any table',
+            OnChangeSubmit => 1
+        }),
+        $HTML->Select({
+            Name           => 'FilterColumn',
+            Options        => $Data->{columns},
+            SelectedValue  => $Params->{FilterColumn},
+            DefaultText    => 'Any column',
+            OnChangeSubmit => 0
+        }),
+        $HTML->Input({
+            Name  => 'FilterValue',
+            Value => $Params->{FilterValue}
+        }),
+        $HTML->Submit({Value => 'SELECT'}),
+        $HTML->ResetButton({Name => 'FilterValue', Text => 'Any value'}),
+        $HTML->ToggleButton({Name => 'ShowUniqueNamesForIDs', OnButton => 'Show ID numbers', OffButton => 'Show ID names'}),
+        $HTML->Input({
+            Name  => 'Limit',
+            Value => $Params->{Limit} || 100
+        }),
+        $HTML->Input({
+            Name      => 'Offset',
+            Value     => $Params->{Offset} || 0,
+            Increment => $Params->{Limit} || 100,
+            Min       => 0
+        }),
+    ]);
 
+    print C qq!<div class="menu">!;
+    print C qq!<div class="cell">! . $HTML->Select({Name => 'FilterSchema', Options => $Data->{schemas}, SelectedValue => $Params->{FilterSchema}, DefaultText => 'Any schema', OnChangeSubmit => 1}) . qq!</div>!;
+    print C qq!<div class="cell">! . $HTML->Select({Name => 'FilterTable',  Options => $Data->{tables},  SelectedValue => $Params->{FilterTable},  DefaultText => 'Any table',  OnChangeSubmit => 1}) . qq!</div>!;
+    print C qq!<div class="cell">! . $HTML->Select({Name => 'FilterColumn', Options => $Data->{columns}, SelectedValue => $Params->{FilterColumn}, DefaultText => 'Any column', OnChangeSubmit => 0}) . qq!</div>!;
+    print C qq!<div class="cell">! . $HTML->Input({Name => 'FilterValue', Value => $Params->{FilterValue}}) . qq!</div>!;
+    print C qq!<div class="cell"><input type="submit" value="SELECT"/></div>!;
+    print C qq!<div class="cell"><input type="button" onClick="document.getElementById('FilterValue').value = ''; document.getElementById('SelectorForm').submit();" value="Any value"/></div>!;
+    print C qq!<div class="cell"><input type="hidden" name="ShowUniqueNamesForIDs" id="ShowUniqueNamesForIDs" value="$Params->{ShowUniqueNamesForIDs}" />!;
+    if ($Params->{ShowUniqueNamesForIDs} eq '1') {
+        print C qq!<div class="cell"><input type="button" onClick="document.getElementById('ShowUniqueNamesForIDs').value = '0'; document.getElementById('SelectorForm').submit();" value="Show ID numbers"/></div>!;
+    } elsif ($Params->{ShowUniqueNamesForIDs} eq '0') {
+        print C qq!<div class="cell"><input type="button" onClick="document.getElementById('ShowUniqueNamesForIDs').value = '1'; document.getElementById('SelectorForm').submit();" value="Show ID names"/></div>!;
+    }
+    print C qq!<div class="cell">! . $HTML->Input({Name => 'Limit', Value => $Params->{Limit}})  . qq!</div>!;
+    my $PrevOffset;
+    my $NextOffset;
+    if (defined($Params->{Offset}) && defined($Params->{Limit})) {
+        $PrevOffset = ($Params->{Offset} - $Params->{Limit});
+        $NextOffset = ($Params->{Offset} + $Params->{Limit});
+    }
+    if ($PrevOffset >= 0) {
+        print C qq!<div class="cell"><input type="button" onClick="document.getElementById('Offset').value = '$PrevOffset'; document.getElementById('SelectorForm').submit();" value="$PrevOffset"/></div>!;
+    }
+    print C qq!<div class="cell">! . $HTML->Input({Name => 'Offset', Value => $Params->{Offset}}) . qq!</div>!;
+    if (defined($NextOffset)) {
+        print C qq!<div class="cell"><input type="button" onClick="document.getElementById('Offset').value = '$NextOffset'; document.getElementById('SelectorForm').submit();" value="$NextOffset"/></div>!;
+    }
+    print C qq!</div>!;
+    print C qq!</div>!;
 
     # Output tables
     my $ID = 0;
@@ -142,24 +226,33 @@ print "
             print C qq!<div class="row">!;
             foreach my $Column (@{$Columns}) {
                 if (defined($Values->{$Column})) {
+                    my $CellClasses = '';
+                    if (defined $Params->{FilterColumn}
+                    && defined $Params->{FilterValue}
+                    && $Column eq $Params->{FilterColumn}
+                    && $Values->{$Column} eq $Params->{FilterValue}
+                    ) {
+                        $CellClasses = ' blink_me';
+                    }
                     if (defined($Parents)
                     &&  defined($Parents->{$Column})
                     &&  scalar @{$Parents->{$Column}} == 1
                     && (!defined($Children) || !defined($Children->{$Column}))
                     ) {
                         my $Parent = $Parents->{$Column}->[0];
-                        print C qq!<div class="cell">&uarr;! . HTML_Link($Parent, 'VALUE') . qq!</div>!;
+                        print C qq!<div class="cell$CellClasses">&uarr;! . $HTML->NodeLink({Node => $Parent, Type => 'VALUE', ShowUniqueNamesForIDs => $Params->{ShowUniqueNamesForIDs}}) . qq!</div>!;
                     } elsif (defined($Children)
                     &&       defined($Children->{$Column})
                     &&       scalar @{$Children->{$Column}} == 1
                     &&      (!defined($Parents) || !defined($Parents->{$Column}))
                     ) {
                         my $Child = $Children->{$Column}->[0];
-                        print C qq!<div class="cell">&darr;! . HTML_Link($Child, 'VALUE') . qq!</div>!;
+                        print C qq!<div class="cell$CellClasses">&darr;! . $HTML->NodeLink({Node => $Child, Type => 'VALUE', ShowUniqueNamesForIDs => $Params->{ShowUniqueNamesForIDs}}) . qq!</div>!;
                     } elsif ( (!defined($Parents)  || !defined($Parents->{$Column}))
                            && (!defined($Children) || !defined($Children->{$Column}))
                     ) {
-                        print C qq!<div class="cell">$Values->{$Column}</div>!;
+                        $ID++;
+                        print C $HTML->Cell({Value => $Values->{$Column}});
                     } else {
                         $ID++;
                         my $Arrows = '';
@@ -167,7 +260,7 @@ print "
                         if (defined($Parents) && defined($Parents->{$Column})) {
                             foreach my $Parent (@{$Parents->{$Column}}) {
                                 $Arrows .= '&uarr;';
-                                $Links .= '&uarr;' . HTML_Link($Parent, 'TABLE') . '<br/>';
+                                $Links .= '&uarr;' . $HTML->NodeLink({Node => $Parent, Type => 'TABLE', ShowUniqueNamesForIDs => $Params->{ShowUniqueNamesForIDs}}) . '<br/>';
                             }
                         }
                         my $DownArrows = '';
@@ -175,11 +268,11 @@ print "
                         if (defined($Children) && defined($Children->{$Column})) {
                             foreach my $Child (@{$Children->{$Column}}) {
                                 $Arrows .= '&darr;';
-                                $Links .= '&darr;' . HTML_Link($Child, 'TABLE') . '<br/>';
+                                $Links .= '&darr;' . $HTML->NodeLink({Node => $Child, Type => 'TABLE', ShowUniqueNamesForIDs => $Params->{ShowUniqueNamesForIDs}}) . '<br/>';
                             }
                         }
                         print C qq!<div class="cell">!;
-                        print C qq!<label class="collapse link" for="cell-$ID">$Arrows$Values->{$Column}</label>!;
+                        print C qq!<label class="collapse link$CellClasses" for="cell-$ID">$Arrows$Values->{$Column}</label>!;
                         print C qq!<input id="cell-$ID" type="checkbox" checked/>!;
                         print C qq!<div>!;
                         print C $Links;
@@ -194,49 +287,11 @@ print "
         }
         print C qq!</div>!;
     }
+    print C qq!</form>!;
+    print C qq!</body>!;
+    print C qq!</html>!;
 
     close(C);
 }
 
-sub HTML_Link {
-    my $HREF = shift;
-    my $Type = shift;
-    my $Label;
-    if ($Type eq 'TABLE') {
-        $Label = ($HREF->{schema} eq 'public' ? '' : $HREF->{schema} . '.') . $HREF->{table};
-    } elsif ($Type eq 'VALUE') {
-        $Label = $HREF->{value} . (defined($HREF->{label}) ? "&nbsp;($HREF->{label})" : '');
-    }
-    my $HTML = qq!<a href="?FilterSchema=$HREF->{schema}&FilterTable=$HREF->{table}&FilterColumn=$HREF->{column}&FilterValue=$HREF->{value}">$Label</a>!;
-    return $HTML;
-}
-
-sub HTML_Select {
-    my $Dataptions = shift;
-    my $Name = shift;
-    my $SelectedValue = shift;
-    my $DefaultLabel = shift;
-    my $Attributes = shift;
-    my $HTML = qq!<select name="$Name" ! . ($Attributes->{OnChangeSubmit} ? qq! onchange="this.form.submit()"! : '') . qq!><option value="">$DefaultLabel</option>!;
-    foreach my $Value (@{$Dataptions}) {
-        if (defined($SelectedValue) && $Value eq $SelectedValue) {
-            $HTML .= qq!<option selected="selected">$Value</option>!;
-        } else {
-            $HTML .= qq!<option>$Value</option>!;
-        }
-    }
-    $HTML .= qq!</select>!;
-    return $HTML;
-}
-
-sub HTML_Input {
-    my $Name = shift;
-    my $Value = shift;
-    my $HTML = '';
-    if (defined($Value)) {
-        $HTML .= qq!<input id="$Name" name="$Name" value="$Value"/>!;
-    } else {
-        $HTML .= qq!<input id="$Name" name="$Name"/>!;
-    }
-    return $HTML;
-}
+1;
