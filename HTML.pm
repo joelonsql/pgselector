@@ -42,12 +42,12 @@ sub NodeLink {
     });
     if ($Attr->{Type} eq 'TABLE') {
         return $Self->HyperLink({
-            HREF  => $HREF,
-            Text => ($Node->{schema} eq 'public' ? '' : $Node->{schema} . '.') . $Node->{table}
+            HREF => $HREF,
+            Text => ($Node->{schema} eq 'public' ? '' : $Node->{schema} . '.') . $Node->{table} . '.' . $Node->{column}
         });
     } elsif ($Attr->{Type} eq 'VALUE' && $Self->{Params}->{ShowUniqueNamesForIDs} eq '1' && defined($Node->{label})) {
         return $Self->HyperLink({
-            HREF  => $HREF,
+            HREF => $HREF,
             Text => $Node->{label}
         });
     }
@@ -105,8 +105,6 @@ sub Table {
     my $HTML = '';
     $HTML .= qq!<div class="table">\n!;
     my $HeaderRow = shift @$Rows;
-    use Data::Dumper;
-    print Dumper $HeaderRow;
     $HTML .= $Self->RowHeader(join('',@$HeaderRow));
     foreach my $Row (@$Rows) {
         $HTML .= $Self->Row(join('',@$Row));
@@ -127,26 +125,29 @@ sub RowHeader {
 
 sub Cell {
     my ($Self, $Attr, $Classes) = @_;
-    my $Column   = $Attr->{Column};
-    my $Value    = $Attr->{Value};
-    my $Classes  = $Attr->{Classes};
-    push @$Classes, 'cell';
+    my $Column    = $Attr->{Column};
+    my $Value     = $Attr->{Value};
+    my $Label     = $Attr->{Label};
+    my $InnerHTML = $Attr->{InnerHTML};
+    my $Classes   = $Attr->{Classes} || [];
     my $HTML = '';
     if ($Self->{Params}->{FilterColumn} eq $Column
     &&  $Self->{Params}->{FilterValue}  eq $Value) {
         push @$Classes, 'blink_me';
     }
-    $HTML .= qq!<div class="! . join(' ',@$Classes) . qq!">$Value</div>\n!;
-    return $HTML;
-}
-
-sub Collapse {
-    my ($Self, $Attr) = @_;
-    my $ID = ++$Self->{CollapseCellID};
-    my $HTML = '';
-    $HTML .= qq!<label class="collapse link" for="cell-$ID">$Attr->{Label}</label>\n!;
-    $HTML .= qq!<input id="cell-$ID" type="checkbox" checked/>\n!;
-    $HTML .= qq!<div>\n$Attr->{InnerHTML}\n</div>\n!;
+    if ($Attr->{Collapse}) {
+        push @$Classes, 'collapse';
+        push @$Classes, 'link';
+        my $ID = ++$Self->{CollapseCellID};
+        $HTML .= qq!<div class="cell">\n!;
+        $HTML .= qq!<label class="! . join(' ',@$Classes) . qq!" for="cell-$ID">$Label</label>\n!;
+        $HTML .= qq!<input id="cell-$ID" type="checkbox" checked/>\n!;
+        $HTML .= qq!<div>\n$InnerHTML\n</div>\n!;
+        $HTML .= qq!</div>\n!;
+    } else {
+        push @$Classes, 'cell';
+        $HTML .= qq!<div class="! . join(' ',@$Classes) . qq!">$InnerHTML</div>\n!;
+    }
     return $HTML;
 }
 
@@ -158,17 +159,17 @@ sub TextCell {
         push @$Classes, 'null';
         $Text = 'NULL';
     } elsif (length($Text) > 80) {
-        $Text =~ s!^(.{40}).*?(.{40})$!$1...$2!;
+        $Text =~ s!^(.{40}).*?(.{40})$!$1...$2!s;
         push @$Classes, 'truncated';
     }
-    return $Self->Cell({Column => $Attr->{Column}, Value => $Text, Classes => $Classes});
+    return $Self->Cell({Column => $Attr->{Column}, Value => $Attr->{Value}, InnerHTML => $Text, Classes => $Classes});
 }
 
 sub Cells {
     my ($Self, $Values) = @_;
     my $Cells = [];
     foreach my $Value (@$Values) {
-        push @$Cells, $Self->Cell({Value => $Value});
+        push @$Cells, $Self->Cell({InnerHTML => $Value});
     }
     return $Cells;
 }

@@ -131,7 +131,6 @@ while (1)
         my $Columns = $Data->{result}->{$Table}->{columns};
         my $RowsHTML = [];
         push @$RowsHTML, $H->Cells($Columns);
-        print Dumper $RowsHTML;
         foreach my $Row (@{$Data->{result}->{$Table}->{rows}}) {
             my $Values   = $Row->{values};
             my $RowHTML = '';
@@ -147,28 +146,30 @@ while (1)
                     $ColumnHTML = $H->TextCell({Column => $Column, Value => $Value});
                 } elsif(@$Parents == 1) {
                     $ColumnHTML = $H->Cell({
-                        Column => $Column,
-                        Value  => $H->NodeLink({Parent => $Parents->[0], Type => 'VALUE'})
+                        Column    => $Column,
+                        Value     => $Value,
+                        InnerHTML => $H->NodeLink({Column => $Column, Parent => $Parents->[0], Type => 'VALUE'})
                     });
                 } elsif(@$Children == 1) {
                     $ColumnHTML = $H->Cell({
-                        Column => $Column,
-                        Value  => $H->NodeLink({Child => $Children->[0], Type => 'VALUE'})
+                        Column    => $Column,
+                        Value     => $Value,
+                        InnerHTML => $H->NodeLink({Column => $Column, Child => $Children->[0], Type => 'VALUE'})
                     });
                 } elsif($CountRelatives > 1) {
                     my @Relatives;
                     foreach my $Parent (@$Parents) {
-                        push @Relatives, $H->NodeLink({Parent => $Parent, Type => 'TABLE'});
+                        push @Relatives, $H->NodeLink({Column => $Column, Parent => $Parent, Type => 'TABLE'});
                     }
                     foreach my $Child (@$Children) {
-                        push @Relatives, $H->NodeLink({Child => $Child, Type => 'TABLE'});
+                        push @Relatives, $H->NodeLink({Column => $Column, Child => $Child, Type => 'TABLE'});
                     }
                     $ColumnHTML = $H->Cell({
-                        Column => $Column,
-                        Value  => $H->Collapse({
-                            Label     => '&uarr;' x @$Parents . '&darr;' x @$Children . $Value,
-                            InnerHTML => join('<br/>', @Relatives)
-                        })
+                        Column    => $Column,
+                        Value     => $Value,
+                        Label     => '&uarr;' x @$Parents . '&darr;' x @$Children . $Value,
+                        InnerHTML => join('<br/>', @Relatives),
+                        Collapse  => 1
                     });
                 }
                 push @$ColumnsHTML, $ColumnHTML;
