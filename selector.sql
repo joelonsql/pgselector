@@ -24,6 +24,7 @@ INNER JOIN pg_class     ON pg_class.oid     = pg_attribute.attrelid
 INNER JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace
 WHERE pg_class.relkind = 'r'
 AND pg_attribute.attnum > 0
+AND pg_attribute.attisdropped IS FALSE
 AND pg_relation_size(pg_class.oid) > 0
 AND pg_namespace.nspname !~ '^(pg_(toast.*|temp.*|catalog)|information_schema)$'
 AND NOT pg_is_other_temp_schema(pg_namespace.oid)
@@ -83,16 +84,18 @@ AND pg_namespace.nspname  !~ '^(pg_(toast.*|temp.*|catalog)|information_schema)$
 AND NOT pg_is_other_temp_schema(pg_namespace.oid)
 AND (_Column IS NULL OR EXISTS (
     SELECT 1 FROM pg_attribute
-    WHERE attrelid = pg_class.oid
-    AND   attnum   > 0
-    AND   attname  = _Column
+    WHERE attrelid     = pg_class.oid
+    AND   attnum       > 0
+    AND   attisdropped IS FALSE
+    AND   attname      = _Column
 ));
 
 SELECT to_jsonb(array_agg(attname ORDER BY attnum))
 INTO _Columns
 FROM pg_attribute
-WHERE attrelid = _TableOID
-AND   attnum   > 0;
+WHERE attrelid     = _TableOID
+AND   attnum       > 0
+AND   attisdropped IS FALSE;
 _Rows := jsonb_build_array();
 FOR _Row IN
 EXECUTE format(
