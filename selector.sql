@@ -124,43 +124,32 @@ LOOP
         _RelatedTable,
         _RelatedColumn
     IN
-    SELECT
-    ParentColumn.attname AS ColumnName,
-    'CHILD'              AS RelationType,
-    ChildSchema.nspname  AS ChildSchema,
-    ChildTable.relname   AS ChildTable,
-    ChildColumn.attname  AS ChildColumn
-    FROM pg_constraint      AS ForeignKey
-    INNER JOIN pg_class     AS ParentTable   ON ParentTable.oid       = ForeignKey.confrelid
-    INNER JOIN pg_attribute AS ParentColumn  ON ParentColumn.attrelid = ForeignKey.confrelid
-                                            AND ParentColumn.attnum   = ForeignKey.confkey[1]
-    INNER JOIN pg_class     AS ChildTable    ON ChildTable.oid        = ForeignKey.conrelid
-    INNER JOIN pg_attribute AS ChildColumn   ON ChildColumn.attrelid  = ForeignKey.conrelid
-                                            AND ChildColumn.attnum    = ForeignKey.conkey[1]
-    INNER JOIN pg_namespace AS ParentSchema  ON ParentSchema.oid      = ParentTable.relnamespace
-    INNER JOIN pg_namespace AS ChildSchema   ON ChildSchema.oid       = ChildTable.relnamespace
-    WHERE ParentTable.oid                 = _TableOID
-    AND ForeignKey.contype                = 'f'
-    AND array_length(ForeignKey.conkey,1) = 1 -- only single-column FKs are supported
+    WITH FKs AS (
+        SELECT
+        ParentTable.oid      AS ParentOID,
+        ParentSchema.nspname AS ParentSchema,
+        ParentTable.relname  AS ParentTable,
+        ParentColumn.attname AS ParentColumn,
+        ChildTable.oid       AS ChildOID,
+        ChildSchema.nspname  AS ChildSchema,
+        ChildTable.relname   AS ChildTable,
+        ChildColumn.attname  AS ChildColumn
+        FROM pg_constraint      AS ForeignKey
+        INNER JOIN pg_class     AS ParentTable   ON ParentTable.oid       = ForeignKey.confrelid
+        INNER JOIN pg_attribute AS ParentColumn  ON ParentColumn.attrelid = ForeignKey.confrelid
+                                                AND ParentColumn.attnum   = ForeignKey.confkey[1]
+        INNER JOIN pg_class     AS ChildTable    ON ChildTable.oid        = ForeignKey.conrelid
+        INNER JOIN pg_attribute AS ChildColumn   ON ChildColumn.attrelid  = ForeignKey.conrelid
+                                                AND ChildColumn.attnum    = ForeignKey.conkey[1]
+        INNER JOIN pg_namespace AS ParentSchema  ON ParentSchema.oid      = ParentTable.relnamespace
+        INNER JOIN pg_namespace AS ChildSchema   ON ChildSchema.oid       = ChildTable.relnamespace
+        WHERE _TableOID IN (ParentTable.oid,ChildTable.oid)
+        AND ForeignKey.contype                = 'f'
+        AND array_length(ForeignKey.conkey,1) = 1 -- only single-column FKs are supported
+    )
+    SELECT ParentColumn, 'CHILD',  ChildSchema,  ChildTable,  ChildColumn  FROM FKs WHERE ParentOID = _TableOID
     UNION ALL
-    SELECT
-    ChildColumn.attname  AS ColumnName,
-    'PARENT'             AS RelationType,
-    ParentSchema.nspname AS ParentSchema,
-    ParentTable.relname  AS ParentTable,
-    ParentColumn.attname AS ParentColumn
-    FROM pg_constraint      AS ForeignKey
-    INNER JOIN pg_class     AS ParentTable   ON ParentTable.oid       = ForeignKey.confrelid
-    INNER JOIN pg_attribute AS ParentColumn  ON ParentColumn.attrelid = ForeignKey.confrelid
-                                            AND ParentColumn.attnum   = ForeignKey.confkey[1]
-    INNER JOIN pg_class     AS ChildTable    ON ChildTable.oid        = ForeignKey.conrelid
-    INNER JOIN pg_attribute AS ChildColumn   ON ChildColumn.attrelid  = ForeignKey.conrelid
-                                            AND ChildColumn.attnum    = ForeignKey.conkey[1]
-    INNER JOIN pg_namespace AS ParentSchema  ON ParentSchema.oid      = ParentTable.relnamespace
-    INNER JOIN pg_namespace AS ChildSchema   ON ChildSchema.oid       = ChildTable.relnamespace
-    WHERE ChildTable.oid                  = _TableOID
-    AND ForeignKey.contype                = 'f'
-    AND array_length(ForeignKey.conkey,1) = 1 -- only single-column FKs are supported
+    SELECT ChildColumn,  'PARENT', ParentSchema, ParentTable, ParentColumn FROM FKs WHERE ChildOID  = _TableOID
     ORDER BY 1,2,3,4,5
     LOOP
         _ColumnValue := jsonb_extract_path_text(_Values, _ColumnName);
