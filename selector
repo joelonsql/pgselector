@@ -39,7 +39,7 @@ sub decode_query_string {
 
 my $CSS = slurp('selector.css');
 
-my @Connect = ("dbi:Pg:;port=5433", '', '', {pg_enable_utf8 => 1, sslmode => 'require', RaiseError => 1, PrintError => 0, AutoCommit => 1});
+my @Connect = ("dbi:Pg:;port=5432", '', '', {pg_enable_utf8 => 1, sslmode => 'require', RaiseError => 1, PrintError => 0, AutoCommit => 1});
 
 my $DBH = DBI->connect(@Connect);
 

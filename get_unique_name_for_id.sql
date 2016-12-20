@@ -6,6 +6,7 @@ _Value  text
 )
 RETURNS text
 LANGUAGE plpgsql
+STABLE
 AS $FUNC$
 DECLARE
 _UniqueNameColumn text;
