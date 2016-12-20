@@ -3,7 +3,7 @@ _FilterSchema name    DEFAULT NULL,
 _FilterTable  name    DEFAULT NULL,
 _FilterColumn name    DEFAULT NULL
 )
-RETURNS text
+RETURNS jsonb
 LANGUAGE plpgsql
 AS $FUNC$
 DECLARE
@@ -24,16 +24,17 @@ INNER JOIN pg_class     ON pg_class.oid     = pg_attribute.attrelid
 INNER JOIN pg_namespace ON pg_namespace.oid = pg_class.relnamespace
 WHERE pg_class.relkind = 'r'
 AND pg_attribute.attnum > 0
+AND pg_relation_size(pg_class.oid) > 0
 AND pg_namespace.nspname !~ '^(pg_(toast.*|temp.*|catalog)|information_schema)$'
 AND NOT pg_is_other_temp_schema(pg_namespace.oid)
 AND (_FilterSchema IS NULL OR pg_namespace.nspname = _FilterSchema)
 AND (_FilterTable  IS NULL OR pg_class.relname     = _FilterTable)
 AND (_FilterColumn IS NULL OR pg_attribute.attname = _FilterColumn);
-RETURN jsonb_pretty(jsonb_build_object(
+RETURN jsonb_build_object(
     'schemas', _SchemaNames,
     'tables',  _TableNames,
     'columns', _ColumnNames
-));
+);
 END;
 $FUNC$;
 
@@ -46,7 +47,7 @@ _Limit     bigint  DEFAULT 10,
 _Offset    bigint  DEFAULT 0,
 _NULLValue boolean DEFAULT FALSE
 )
-RETURNS text
+RETURNS jsonb
 LANGUAGE plpgsql
 AS $FUNC$
 DECLARE
@@ -201,6 +202,6 @@ _RecordSet := _RecordSet || jsonb_build_object(
         'rows',    _Rows
     )
 );
-RETURN jsonb_pretty(jsonb_build_object('recordset', _RecordSet));
+RETURN jsonb_build_object('recordset', _RecordSet);
 END;
 $FUNC$;
