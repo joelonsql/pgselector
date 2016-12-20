@@ -219,10 +219,10 @@ sub Form {
     return qq!<form id="$Self->{FormID}">\n$InnerHTML\n</form>\n!;
 }
 
-sub ResetButton {
+sub SetValueButton {
     my ($Self, $Attr) = @_;
     my $HTML = '';
-    $HTML .= qq!<input type="button" onClick="document.getElementById('$Attr->{Name}').value = ''; document.getElementById('$Self->{FormID}').submit();" value="$Attr->{Text}"/>\n!;
+    $HTML .= qq!<input type="button" onClick="document.getElementById('$Attr->{Name}').value = '$Attr->{Value}'; document.getElementById('$Self->{FormID}').submit();" value="$Attr->{Text}"/>\n!;
 }
 
 sub ToggleButton {

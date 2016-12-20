@@ -50,12 +50,13 @@ my $Filter = $DBH->prepare('SELECT * FROM Selector(
 )');
 
 my $Selector = $DBH->prepare('SELECT * FROM Selector(
-    _Schema := $1,
-    _Table  := $2,
-    _Column := $3,
-    _Value  := $4,
-    _Limit  := $5,
-    _Offset := $6
+    _Schema    := $1,
+    _Table     := $2,
+    _Column    := $3,
+    _Value     := $4,
+    _Limit     := $5,
+    _Offset    := $6,
+    _NULLValue := $7
 )');
 
 my $Port = (@ARGV ? $ARGV[0] : 8432);
@@ -138,13 +139,25 @@ while (1)
 
     my $RecordSet = {recordset => {}};
     if (defined($Params->{FilterSchema}) && defined($Params->{FilterTable})) {
+        my $NULLValue = 0;
+        if (defined($Params->{FilterColumn}) && !defined($Params->{FilterValue})) {
+            if ($Params->{EmptyFieldMeaning} eq 'IS NULL') {
+                $NULLValue = 1;
+            } elsif ($Params->{EmptyFieldMeaning} eq 'Any value') {
+                $Params->{FilterValue} = undef; # noop
+            } elsif ($Params->{EmptyFieldMeaning} eq 'Empty string') {
+                $Params->{FilterValue} = '';
+            }
+        }
+        print "NULLValue: $NULLValue\n";
         $Selector->execute(
             $Params->{FilterSchema},
             $Params->{FilterTable},
             $Params->{FilterColumn},
             $Params->{FilterValue},
             $Params->{Limit},
-            $Params->{Offset}
+            $Params->{Offset},
+            $NULLValue
         );
         my ($RecordSetJSON) = $Selector->fetchrow_array();
         utf8::encode($RecordSetJSON);
@@ -262,8 +275,14 @@ while (1)
                         Name  => 'FilterValue',
                         Value => $Params->{FilterValue}
                     }),
+                    $H->Select({
+                        Name           => 'EmptyFieldMeaning',
+                        Options        => ['IS NULL','Any value','Empty string'],
+                        SelectedValue  => $Params->{EmptyFieldMeaning},
+                        DefaultText    => 'Empty field meaning',
+                        OnChangeSubmit => 1
+                    }),
                     $H->Submit({Value => 'SELECT'}),
-                    $H->ResetButton({Name => 'FilterValue', Text => 'Any value'}),
                     $H->ToggleButton({Name => 'ShowUniqueNamesForIDs', OnButton => 'Raw IDs', OffButton => 'Translate IDs'}),
                     $H->Input({
                         Name  => 'Limit',

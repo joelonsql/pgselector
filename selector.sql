@@ -101,14 +101,11 @@ EXECUTE format(
     %s
     %s',
     _Schema, _Table,
-    CASE WHEN _Column IS NOT NULL AND _Value IS NOT NULL THEN
-        format('WHERE  %I.%I.%I %s', _Schema, _Table, _Column,
-            CASE
-            WHEN _NULLValue
-            THEN 'IS NULL'
-            ELSE format('= %L',_Value)
-            END
-        )
+    CASE
+    WHEN _Column IS NOT NULL AND _Value IS NOT NULL THEN
+        format('WHERE  %I.%I.%I = %L', _Schema, _Table, _Column, _Value)
+    WHEN _Column IS NOT NULL AND _NULLValue IS TRUE THEN
+        format('WHERE  %I.%I.%I IS NULL', _Schema, _Table, _Column)
     END,
     CASE WHEN _Limit  IS NOT NULL THEN 'LIMIT ' || _Limit END,
     CASE WHEN _Offset IS NOT NULL THEN 'OFFSET '|| _Offset END
