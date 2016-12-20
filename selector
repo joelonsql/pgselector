@@ -156,7 +156,6 @@ while (1)
                 $Params->{FilterValue} = '';
             }
         }
-        print "NULLValue: $NULLValue\n";
         $Selector->execute(
             $Params->{FilterSchema},
             $Params->{FilterTable},
