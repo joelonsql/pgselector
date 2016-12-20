@@ -33,7 +33,8 @@ body {
 }
 .row.header {
   display: table-header-group
-  font-weight: 700;
+  font-size: 150%;
+  font-weight: bold;
   color: #ffffff;
   background: #2980b9;
 }
