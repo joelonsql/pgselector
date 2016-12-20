@@ -189,7 +189,7 @@ while (1)
             my $RowHTML = '';
             my $ColumnsHTML = [];
             foreach my $Column (@{$Columns}) {
-                my $Value = $Values->{$Column};
+                my $Value = ref($Values->{$Column}) eq 'ARRAY' ? '{'.join(',',@{$Values->{$Column}}).'}' : $Values->{$Column};
                 my $Parents  = (defined($Row->{parents})  && defined($Row->{parents}->{$Column}))  ? $Row->{parents}->{$Column}  : []; 
                 my $Children = (defined($Row->{children}) && defined($Row->{children}->{$Column})) ? $Row->{children}->{$Column} : []; 
                 my $ColumnHTML;
