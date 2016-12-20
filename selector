@@ -39,7 +39,14 @@ sub decode_query_string {
 
 my $CSS = slurp('selector.css');
 
-my @Connect = ("dbi:Pg:;port=5432", '', '', {pg_enable_utf8 => 1, sslmode => 'require', RaiseError => 1, PrintError => 0, AutoCommit => 1});
+use Term::ReadKey;
+print "Password: ";
+ReadMode('noecho'); # don't echo
+chomp(my $Password = <STDIN>);
+ReadMode(0);        # back to normal
+print "\n";
+
+my @Connect = ("dbi:Pg:", '', $Password, {pg_enable_utf8 => 1, sslmode => 'require', RaiseError => 1, PrintError => 0, AutoCommit => 1});
 
 my $DBH = DBI->connect(@Connect);
 
