@@ -19,41 +19,47 @@ sub Hash2Query {
 
 sub HyperLink {
     my ($Self, $Attr) = @_;
-    return qq!<a href="?$Attr->{HREF}">$Attr->{Text}</a>\n!;
+    return qq!<a class="$Attr->{Class}" href="?$Attr->{HREF}">$Attr->{Text}</a>\n!;
 }
 
 sub NodeLink {
     my ($Self, $Attr) = @_;
     my $Node;
-    my $UpDownArrow;
+    my $Arrow;
     if (defined($Attr->{Parent})) {
         $Node = $Attr->{Parent};
-        $UpDownArrow = '&uarr;';
+        $Arrow = '&uarr;';
     } elsif (defined($Attr->{Child})) {
         $Node = $Attr->{Child};
-        $UpDownArrow = '&darr;';
+        $Arrow = '&darr;';
+    } elsif (defined($Attr->{Node})) {
+        $Node = $Attr->{Node};
+        $Arrow = '&rarr;';
     }
     my $HREF = $Self->Hash2Query({
-        FilterSchema          => $Node->{schema},
-        FilterTable           => $Node->{table},
-        FilterColumn          => $Node->{column},
-        FilterValue           => $Node->{value},
+        FilterSchema          => $Node->{schema} || $Self->{Params}->{FilterSchema},
+        FilterTable           => $Node->{table}  || $Self->{Params}->{FilterTable},
+        FilterColumn          => $Node->{column} || $Self->{Params}->{FilterColumn},
+        FilterValue           => $Node->{value}  || $Self->{Params}->{FilterValue},
         ShowUniqueNamesForIDs => $Self->{Params}->{ShowUniqueNamesForIDs}
     });
     if ($Attr->{Type} eq 'TABLE') {
         return $Self->HyperLink({
-            HREF => $HREF,
-            Text => ($Node->{schema} eq 'public' ? '' : $Node->{schema} . '.') . $Node->{table} . '.' . $Node->{column}
+            HREF  => $HREF,
+            Text  => ($Node->{schema} eq 'public' ? '' : $Node->{schema} . '.') . $Node->{table} . '.' . $Node->{column},
+            Class => $Attr->{Class}
         });
     } elsif ($Attr->{Type} eq 'VALUE' && $Self->{Params}->{ShowUniqueNamesForIDs} eq '1' && defined($Node->{label})) {
         return $Self->HyperLink({
-            HREF => $HREF,
-            Text => $Node->{label}
+            HREF  => $HREF,
+            Text  => $Node->{label},
+            Class => $Attr->{Class}
         });
     }
     return $Self->HyperLink({
-        HREF => $HREF,
-        Text => $UpDownArrow . $Node->{value}
+        HREF  => $HREF,
+        Text  => $Arrow . $Node->{value},
+        Class => $Attr->{Class}
     });
 }
 
@@ -131,22 +137,29 @@ sub Cell {
     my $InnerHTML = $Attr->{InnerHTML};
     my $Classes   = $Attr->{Classes} || [];
     my $HTML = '';
-    if ($Self->{Params}->{FilterColumn} eq $Column
-    &&  $Self->{Params}->{FilterValue}  eq $Value) {
-        push @$Classes, 'blink_me';
+    my $ID;
+    if (!defined($Self->{CellIDs}->{$Column})) {
+        $Self->{CellIDs}->{$Column} = 0;
+        $ID = "column-$Column";
+        if ($Self->{Params}->{FilterColumn} eq $Column && defined($Self->{Params}->{FilterValue})) {
+            push @$Classes, 'blink_me';
+        }
+    } else {
+        $Self->{CellIDs}->{$Column}++;
+        $ID = "column-$Column-row-$Self->{CellIDs}->{$Column}";
     }
     if ($Attr->{Collapse}) {
         push @$Classes, 'collapse';
         push @$Classes, 'link';
         my $ID = ++$Self->{CollapseCellID};
-        $HTML .= qq!<div class="cell">\n!;
+        $HTML .= qq!<div id="$ID" class="cell">\n!;
         $HTML .= qq!<label class="! . join(' ',@$Classes) . qq!" for="cell-$ID">$Label</label>\n!;
         $HTML .= qq!<input id="cell-$ID" type="checkbox" checked/>\n!;
         $HTML .= qq!<div>\n$InnerHTML\n</div>\n!;
         $HTML .= qq!</div>\n!;
     } else {
-        push @$Classes, 'cell';
-        $HTML .= qq!<div class="! . join(' ',@$Classes) . qq!">$InnerHTML</div>\n!;
+        unshift @$Classes, 'cell';
+        $HTML .= qq!<div id="$ID" class="! . join(' ',@$Classes) . qq!">$InnerHTML</div>\n!;
     }
     return $HTML;
 }
@@ -169,7 +182,7 @@ sub Cells {
     my ($Self, $Values) = @_;
     my $Cells = [];
     foreach my $Value (@$Values) {
-        push @$Cells, $Self->Cell({InnerHTML => $Value});
+        push @$Cells, $Self->Cell({Column => $Value, Value => $Value, InnerHTML => $Value});
     }
     return $Cells;
 }
@@ -181,11 +194,12 @@ sub Submit {
 
 sub Body {
     my ($Self, $InnerHTML) = @_;
-    return qq!<body translate="no">$InnerHTML</form>\n!;
+    return qq!<body translate="no" onload="OnLoadHandler();">$InnerHTML</form>\n!;
 }
 
 sub Head {
     my ($Self, $Attr) = @_;
+
     return qq!
         <head>
             <meta charset="UTF-8" />

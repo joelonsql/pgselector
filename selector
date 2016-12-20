@@ -43,13 +43,19 @@ my @Connect = ("dbi:Pg:;port=5433", '', '', {pg_enable_utf8 => 1, sslmode => 're
 
 my $DBH = DBI->connect(@Connect);
 
-my $Selector = $DBH->prepare('SELECT * FROM Selector(
+my $Filter = $DBH->prepare('SELECT * FROM Selector(
     _FilterSchema := $1,
     _FilterTable  := $2,
-    _FilterColumn := $3,
-    _FilterValue  := $4,
-    _Limit        := $5,
-    _Offset       := $6
+    _FilterColumn := $3
+)');
+
+my $Selector = $DBH->prepare('SELECT * FROM Selector(
+    _Schema := $1,
+    _Table  := $2,
+    _Column := $3,
+    _Value  := $4,
+    _Limit  := $5,
+    _Offset := $6
 )');
 
 my $Port = (@ARGV ? $ARGV[0] : 8432);
@@ -81,21 +87,16 @@ while (1)
         close(C);
         next;
     }
-    my $H = HTML->New({
-        Params => $Params,
-        FormID => 'SelectorForm'
-    });
     foreach my $Key (keys %{$Params}) {
         if (defined($Params->{$Key}) && $Params->{$Key} eq '') {
             $Params->{$Key} = undef;
         }
     }
+    my $H = HTML->New({
+        Params => $Params,
+        FormID => 'SelectorForm'
+    });
 
-    if (!defined($Params->{FilterValue})) {
-        $Params->{FilterColumn} = undef;
-    } elsif ($Params->{FilterValue} eq 'NULL') {
-        $Params->{FilterValue} = undef;
-    }
     if (!defined($Params->{FilterColumn})) {
         $Params->{FilterValue} = undef;
     }
@@ -111,27 +112,79 @@ while (1)
         $Params->{Offset} = '0';
     }
 
-    $Selector->execute(
+    $Filter->execute(
         $Params->{FilterSchema},
         $Params->{FilterTable},
-        $Params->{FilterColumn},
-        $Params->{FilterValue},
-        $Params->{Limit},
-        $Params->{Offset}
+        $Params->{FilterColumn}
     );
-    my ($JSON) = $Selector->fetchrow_array();
-    utf8::encode($JSON);
-    my $Data = from_json($JSON);
-    $Selector->finish();
+    my ($FilterMenuJSON) = $Filter->fetchrow_array();
+    utf8::encode($FilterMenuJSON);
+    my $FilterMenu = from_json($FilterMenuJSON);
+    $Filter->finish();
+
+    if (@{$FilterMenu->{schemas}} == 1) {
+        $Params->{FilterSchema} = $FilterMenu->{schemas}->[0];
+    }
+    if (@{$FilterMenu->{tables}} == 1) {
+        $Params->{FilterTable} = $FilterMenu->{tables}->[0];
+    }
+    if (@{$FilterMenu->{columns}} == 1) {
+        $Params->{FilterColumn} = $FilterMenu->{columns}->[0];
+    }
 
     print C "HTTP/1.1 200\n\n";
 
-    my $TableHTML = '';
-    foreach my $Table (sort keys %{$Data->{result}}) {
-        my $Columns = $Data->{result}->{$Table}->{columns};
+    my $Content = '';
+
+    my $RecordSet = {recordset => {}};
+    if (defined($Params->{FilterSchema}) && defined($Params->{FilterTable})) {
+        $Selector->execute(
+            $Params->{FilterSchema},
+            $Params->{FilterTable},
+            $Params->{FilterColumn},
+            $Params->{FilterValue},
+            $Params->{Limit},
+            $Params->{Offset}
+        );
+        my ($RecordSetJSON) = $Selector->fetchrow_array();
+        utf8::encode($RecordSetJSON);
+        $RecordSet = from_json($RecordSetJSON);
+        $Selector->finish();
+    } else {
+        $Content .= "<h1>Schemas:</h1>\n";
+        my $I;
+        foreach my $Schema (@{$FilterMenu->{schemas}}) {
+            $Content .= $H->NodeLink({Node => {schema => $Schema, label => $Schema}, Type => 'VALUE', Class => 'menulink'});
+            if (!defined($I) || $I ne substr($Schema,0,1)) {
+                $Content .= "<br/>";
+                $I = substr($Schema,0,1);
+            }
+        }
+        $Content .= "<h1>Tables:</h1>\n";
+        $I = '';
+        foreach my $Table (@{$FilterMenu->{tables}}) {
+            $Content .= $H->NodeLink({Node => {table => $Table, label => $Table}, Type => 'VALUE', Class => 'menulink'});
+            if (!defined($I) || $I ne substr($Table,0,1)) {
+                $Content .= "<br/>";
+                $I = substr($Table,0,1);
+            }
+        }
+        $Content .= "<h1>Columns:</h1>\n";
+        $I = '';
+        foreach my $Column (@{$FilterMenu->{columns}}) {
+            $Content .= $H->NodeLink({Node => {column => $Column, label => $Column}, Type => 'VALUE', Class => 'menulink'});
+            if (!defined($I) || $I ne substr($Column,0,1)) {
+                $Content .= "<br/>";
+                $I = substr($Column,0,1);
+            }
+        }
+    }
+
+    foreach my $Table (sort keys %{$RecordSet->{recordset}}) {
+        my $Columns = $RecordSet->{recordset}->{$Table}->{columns};
         my $RowsHTML = [];
         push @$RowsHTML, $H->Cells($Columns);
-        foreach my $Row (@{$Data->{result}->{$Table}->{rows}}) {
+        foreach my $Row (@{$RecordSet->{recordset}->{$Table}->{rows}}) {
             my $Values   = $Row->{values};
             my $RowHTML = '';
             my $ColumnsHTML = [];
@@ -176,7 +229,7 @@ while (1)
             }
             push @$RowsHTML, $ColumnsHTML;
         }
-        $TableHTML .= $H->Table($RowsHTML);
+        $Content .= $H->Table($RowsHTML);
     }
 
     print C $H->HTML(
@@ -186,24 +239,24 @@ while (1)
                 $H->Menu([
                     $H->Select({
                         Name           => 'FilterSchema',
-                        Options        => $Data->{schemas},
+                        Options        => $FilterMenu->{schemas},
                         SelectedValue  => $Params->{FilterSchema},
                         DefaultText    => 'Any schema',
                         OnChangeSubmit => 1
                     }),
                     $H->Select({
                         Name           => 'FilterTable',
-                        Options        => $Data->{tables},
+                        Options        => $FilterMenu->{tables},
                         SelectedValue  => $Params->{FilterTable},
                         DefaultText    => 'Any table',
                         OnChangeSubmit => 1
                     }),
                     $H->Select({
                         Name           => 'FilterColumn',
-                        Options        => $Data->{columns},
+                        Options        => $FilterMenu->{columns},
                         SelectedValue  => $Params->{FilterColumn},
                         DefaultText    => 'Any column',
-                        OnChangeSubmit => 0
+                        OnChangeSubmit => 1
                     }),
                     $H->Input({
                         Name  => 'FilterValue',
@@ -223,7 +276,7 @@ while (1)
                         Min       => 0
                     }),
                 ])
-                . $TableHTML
+                . $Content
             )
         )
     );

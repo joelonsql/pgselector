@@ -1,8 +1,7 @@
 CREATE OR REPLACE FUNCTION public.Selector(
 _FilterSchema name    DEFAULT NULL,
 _FilterTable  name    DEFAULT NULL,
-_FilterColumn name    DEFAULT NULL,
-_FilterValue  text    DEFAULT NULL
+_FilterColumn name    DEFAULT NULL
 )
 RETURNS text
 LANGUAGE plpgsql
@@ -29,12 +28,7 @@ AND pg_namespace.nspname !~ '^(pg_(toast.*|temp.*|catalog)|information_schema)$'
 AND NOT pg_is_other_temp_schema(pg_namespace.oid)
 AND (_FilterSchema IS NULL OR pg_namespace.nspname = _FilterSchema)
 AND (_FilterTable  IS NULL OR pg_class.relname     = _FilterTable)
-AND (_FilterColumn IS NULL OR EXISTS (
-    SELECT 1 FROM pg_attribute
-    WHERE attrelid = pg_class.oid
-    AND   attnum   > 0
-    AND   attname  = _FilterColumn
-));
+AND (_FilterColumn IS NULL OR pg_attribute.attname = _FilterColumn);
 RETURN jsonb_pretty(jsonb_build_object(
     'schemas', _SchemaNames,
     'tables',  _TableNames,
@@ -44,12 +38,13 @@ END;
 $FUNC$;
 
 CREATE OR REPLACE FUNCTION public.Selector(
-_Schema name,
-_Table  name,
-_Column name   DEFAULT NULL,
-_Value  text   DEFAULT NULL,
-_Limit  bigint DEFAULT 10,
-_Offset bigint DEFAULT 0
+_Schema    name,
+_Table     name,
+_Column    name    DEFAULT NULL,
+_Value     text    DEFAULT NULL,
+_Limit     bigint  DEFAULT 10,
+_Offset    bigint  DEFAULT 0,
+_NULLValue boolean DEFAULT FALSE
 )
 RETURNS text
 LANGUAGE plpgsql
@@ -92,7 +87,6 @@ AND (_Column IS NULL OR EXISTS (
     AND   attname  = _Column
 ));
 
-RAISE NOTICE '%', _Table;
 SELECT to_jsonb(array_agg(attname ORDER BY attnum))
 INTO _Columns
 FROM pg_attribute
@@ -106,11 +100,13 @@ EXECUTE format(
     %s
     %s',
     _Schema, _Table,
-    CASE WHEN _Column IS NOT NULL THEN
+    CASE WHEN _Column IS NOT NULL AND _Value IS NOT NULL THEN
         format('WHERE  %I.%I.%I %s', _Schema, _Table, _Column,
-            CASE WHEN _Value IS NOT NULL THEN
-                format('= %L',_Value)
-            ELSE 'IS NULL' END
+            CASE
+            WHEN _NULLValue
+            THEN 'IS NULL'
+            ELSE format('= %L',_Value)
+            END
         )
     END,
     CASE WHEN _Limit  IS NOT NULL THEN 'LIMIT ' || _Limit END,
@@ -129,39 +125,43 @@ LOOP
         _RelatedColumn
     IN
     SELECT
-        CASE RelationType WHEN 'PARENT' THEN ChildColumn  WHEN 'CHILD' THEN ParentColumn END,
-        RelationType,
-        CASE RelationType WHEN 'PARENT' THEN ParentSchema WHEN 'CHILD' THEN ChildSchema  END,
-        CASE RelationType WHEN 'PARENT' THEN ParentTable  WHEN 'CHILD' THEN ChildTable   END,
-        CASE RelationType WHEN 'PARENT' THEN ParentColumn WHEN 'CHILD' THEN ChildColumn  END
-    FROM (
-        SELECT
-        CASE
-        WHEN ParentTable.oid      = _TableOID
-        THEN 'CHILD'
-        WHEN ChildTable.oid       = _TableOID
-        THEN 'PARENT'
-        END                  AS RelationType,
-        ParentSchema.nspname AS ParentSchema,
-        ParentTable.relname  AS ParentTable,
-        ParentColumn.attname AS ParentColumn,
-        ChildSchema.nspname  AS ChildSchema,
-        ChildTable.relname   AS ChildTable,
-        ChildColumn.attname  AS ChildColumn
-        FROM pg_constraint       AS ForeignKey
-        INNER JOIN pg_class      AS ParentTable   ON ParentTable.oid       = ForeignKey.confrelid
-        INNER JOIN pg_attribute  AS ParentColumn  ON ParentColumn.attrelid = ForeignKey.confrelid
-                                                 AND ParentColumn.attnum   = ForeignKey.confkey[1]
-        INNER JOIN pg_class      AS ChildTable    ON ChildTable.oid        = ForeignKey.conrelid
-        INNER JOIN pg_attribute  AS ChildColumn   ON ChildColumn.attrelid  = ForeignKey.conrelid
-                                                 AND ChildColumn.attnum    = ForeignKey.conkey[1]
-        INNER JOIN pg_namespace  AS ParentSchema  ON ParentSchema.oid      = ParentTable.relnamespace
-        INNER JOIN pg_namespace  AS ChildSchema   ON ChildSchema.oid       = ChildTable.relnamespace
-        WHERE ForeignKey.contype = 'f'
-        AND _TableOID IN (ParentTable.oid,ChildTable.oid)
-        AND array_length(ForeignKey.conkey,1) = 1 -- only single-column FKs are supported
-        ORDER BY 1,2,3,4,5
-    ) AS RelatedTables
+    ParentColumn.attname AS ColumnName,
+    'CHILD'              AS RelationType,
+    ChildSchema.nspname  AS ChildSchema,
+    ChildTable.relname   AS ChildTable,
+    ChildColumn.attname  AS ChildColumn
+    FROM pg_constraint      AS ForeignKey
+    INNER JOIN pg_class     AS ParentTable   ON ParentTable.oid       = ForeignKey.confrelid
+    INNER JOIN pg_attribute AS ParentColumn  ON ParentColumn.attrelid = ForeignKey.confrelid
+                                            AND ParentColumn.attnum   = ForeignKey.confkey[1]
+    INNER JOIN pg_class     AS ChildTable    ON ChildTable.oid        = ForeignKey.conrelid
+    INNER JOIN pg_attribute AS ChildColumn   ON ChildColumn.attrelid  = ForeignKey.conrelid
+                                            AND ChildColumn.attnum    = ForeignKey.conkey[1]
+    INNER JOIN pg_namespace AS ParentSchema  ON ParentSchema.oid      = ParentTable.relnamespace
+    INNER JOIN pg_namespace AS ChildSchema   ON ChildSchema.oid       = ChildTable.relnamespace
+    WHERE ParentTable.oid                 = _TableOID
+    AND ForeignKey.contype                = 'f'
+    AND array_length(ForeignKey.conkey,1) = 1 -- only single-column FKs are supported
+    UNION ALL
+    SELECT
+    ChildColumn.attname  AS ColumnName,
+    'PARENT'             AS RelationType,
+    ParentSchema.nspname AS ParentSchema,
+    ParentTable.relname  AS ParentTable,
+    ParentColumn.attname AS ParentColumn
+    FROM pg_constraint      AS ForeignKey
+    INNER JOIN pg_class     AS ParentTable   ON ParentTable.oid       = ForeignKey.confrelid
+    INNER JOIN pg_attribute AS ParentColumn  ON ParentColumn.attrelid = ForeignKey.confrelid
+                                            AND ParentColumn.attnum   = ForeignKey.confkey[1]
+    INNER JOIN pg_class     AS ChildTable    ON ChildTable.oid        = ForeignKey.conrelid
+    INNER JOIN pg_attribute AS ChildColumn   ON ChildColumn.attrelid  = ForeignKey.conrelid
+                                            AND ChildColumn.attnum    = ForeignKey.conkey[1]
+    INNER JOIN pg_namespace AS ParentSchema  ON ParentSchema.oid      = ParentTable.relnamespace
+    INNER JOIN pg_namespace AS ChildSchema   ON ChildSchema.oid       = ChildTable.relnamespace
+    WHERE ChildTable.oid                  = _TableOID
+    AND ForeignKey.contype                = 'f'
+    AND array_length(ForeignKey.conkey,1) = 1 -- only single-column FKs are supported
+    ORDER BY 1,2,3,4,5
     LOOP
         _ColumnValue := jsonb_extract_path_text(_Values, _ColumnName);
         IF _ColumnValue IS NULL THEN
@@ -191,13 +191,13 @@ LOOP
             IF _Parents ? _ColumnName THEN
                 _Parents := jsonb_insert(_Parents, ARRAY[_ColumnName, '0'], _RelatedData);
             ELSE
-                _Parents := jsonb_build_object(_ColumnName, jsonb_build_array(_RelatedData));
+                _Parents := _Parents || jsonb_build_object(_ColumnName, jsonb_build_array(_RelatedData));
             END IF;
         ELSIF _RelationType = 'CHILD'  THEN
             IF _Children ? _ColumnName THEN
                 _Children := jsonb_insert(_Children, ARRAY[_ColumnName, '0'], _RelatedData);
             ELSE
-                _Children := jsonb_build_object(_ColumnName, jsonb_build_array(_RelatedData));
+                _Children := _Children || jsonb_build_object(_ColumnName, jsonb_build_array(_RelatedData));
             END IF;
         END IF;
     END LOOP;
